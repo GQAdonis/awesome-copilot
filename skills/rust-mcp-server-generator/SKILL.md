@@ -1,216 +1,115 @@
 ---
 name: rust-mcp-server-generator
-description: 'Generate a complete Rust Model Context Protocol server project with tools, prompts, resources, and tests using the official rmcp SDK'
+description: 'Generates a complete Rust MCP server project with tools, prompts, resources, and tests using rmcp 3.4.0, the official Model Context Protocol Rust SDK. Use when scaffolding new MCP servers in Rust, upgrading from rmcp 0.x/1.x/2.x templates, adding Streamable HTTP transport, or supporting multiple MCP protocol versions (2026-07-28, 2025-11-25, 2025-06-18, 2024-11-05) from one server.'
 ---
 
 # Rust MCP Server Generator
 
-You are a Rust MCP server generator. Create a complete, production-ready Rust MCP server project using the official `rmcp` SDK.
+Generate a complete, production-ready Rust Model Context Protocol (MCP) server using rmcp 3.4.0, the official Rust SDK at https://github.com/modelcontextprotocol/rust-sdk.
 
-## Project Requirements
+## Key Facts (rmcp 3.4.0)
 
-Ask the user for:
-1. **Project name** (e.g., "my-mcp-server")
-2. **Server description** (e.g., "A weather data MCP server")
-3. **Transport type** (stdio, sse, http, or all)
-4. **Tools to include** (e.g., "weather lookup", "forecast", "alerts")
-5. **Whether to include prompts and resources**
+- Edition 2024, minimum Rust 1.88.
+- `ServerConfig` is a type alias for `InitializeResult`; `ServerInfo` is a deprecated alias. `get_info()` returns `ServerConfig`.
+- `ProtocolVersion` supports four MCP versions out of the box: `V_2026_07_28`, `V_2025_11_25` (`LATEST`), `V_2025_06_18` (`STANDARD_HEADERS`), and `V_2024_11_05`. `ProtocolVersion::KNOWN_VERSIONS` contains all four.
+- The default `ServerHandler::supported_protocol_versions()` already returns `Cow::Borrowed(ProtocolVersion::KNOWN_VERSIONS)` — one server serves every known protocol version and negotiates per client. Override it only to restrict versions.
+- `RequestContext` has no `Default` impl — never use `RequestContext::default()` in tests; construct services via `serve()` instead.
+- `RunningService` must be awaited (`waiting()`) or cancelled (`cancel()`); dropping it leaks the task and logs a warning.
+
+## Requirements
+
+- Rust 1.88+ (edition 2024)
+- Cargo
+- Basic understanding of async Rust and MCP concepts
 
 ## Project Structure
 
-Generate this structure:
+The generated project follows this structure:
 
 ```
-{project-name}/
+my-mcp-server/
 ├── Cargo.toml
-├── .gitignore
 ├── README.md
 ├── src/
-│   ├── main.rs
-│   ├── handler.rs
-│   ├── tools/
-│   │   ├── mod.rs
-│   │   └── {tool_name}.rs
-│   ├── prompts/
-│   │   ├── mod.rs
-│   │   └── {prompt_name}.rs
-│   ├── resources/
-│   │   ├── mod.rs
-│   │   └── {resource_name}.rs
-│   └── state.rs
-└── tests/
-    └── integration_test.rs
+│   ├── main.rs           # Entry point with server setup
+│   ├── handler.rs        # MCP handler implementation (tools, prompts, resources)
+│   ├── tools/            # Tool implementations
+│   │   └── mod.rs
+│   ├── prompts/          # Prompt implementations
+│   │   └── mod.rs
+│   └── resources/        # Resource implementations
+│       └── mod.rs
+└── tests/                # Integration tests
+    └── server_tests.rs
 ```
 
-## File Templates
+## Generated Project Files
 
 ### Cargo.toml
 
 ```toml
 [package]
-name = "{project-name}"
+name = "my-mcp-server"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"        # rmcp 3.4.0 requires edition 2024 (rust 1.88+)
 
 [dependencies]
-rmcp = { version = "0.8.1", features = ["server"] }
-rmcp-macros = "0.8"
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-anyhow = "1.0"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-schemars = { version = "0.8", features = ["derive"] }
-async-trait = "0.1"
+# Exact pins: MCP servers are long-lived stdio processes; reproducible builds
+# matter more than semver drift. Bump deliberately after reading changelogs.
+rmcp = { version = "=3.4.0", features = ["server", "macros", "schemars"] } # official MCP Rust SDK; 3.4.0 adds 2026-07-28 spec support and tasks extension
+rmcp-macros = "=3.4.0"  # keep in lockstep with rmcp; #[tool], #[tool_router], #[prompt] macros
+tokio = { version = "=1.53.1", features = ["full"] }  # async runtime; full features for process/time/signal
+serde = { version = "=1.0.229", features = ["derive"] }  # serialization
+serde_json = "=1.0.151"  # JSON for MCP payloads
+schemars = "=1.2.2"     # JSON Schema generation for tool parameters (1.x, not 0.8)
+anyhow = "=1.0.104"     # application-level errors
+async-trait = "=0.1.92" # ServerHandler trait methods
+tracing = "=0.1.44"     # structured logging
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }  # log output (stderr only — stdout is the MCP channel)
+base64 = "=0.23.1"      # resource blob encoding (0.23 API: base64::prelude::*)
 
-# Optional: for HTTP transports
-axum = { version = "0.7", optional = true }
-tower-http = { version = "0.5", features = ["cors"], optional = true }
+# Optional: Streamable HTTP transport (remote servers).
+# Verify the exact feature name in rmcp 3.4.0's Cargo.toml before enabling;
+# candidate: features = ["transport-streamable-http-server"]
+# axum = "=0.8.9"              # HTTP framework for Streamable HTTP transport
+# tower-http = { version = "=0.7.1", features = ["cors"] }  # CORS middleware
 
 [dev-dependencies]
-tokio-test = "0.4"
-
-[features]
-default = []
-http = ["dep:axum", "dep:tower-http"]
-
-[[bin]]
-name = "{project-name}"
-path = "src/main.rs"
-```
-
-### .gitignore
-
-```gitignore
-/target
-Cargo.lock
-*.swp
-*.swo
-*~
-.DS_Store
-```
-
-### README.md
-
-```markdown
-# {Project Name}
-
-{Server description}
-
-## Installation
-
-```bash
-cargo build --release
-```
-
-## Usage
-
-### Stdio Transport
-
-```bash
-cargo run
-```
-
-### SSE Transport
-
-```bash
-cargo run --features http -- --transport sse
-```
-
-### HTTP Transport
-
-```bash
-cargo run --features http -- --transport http
-```
-
-## Configuration
-
-Configure in your MCP client (e.g., Claude Desktop):
-
-```json
-{
-  "mcpServers": {
-    "{project-name}": {
-      "command": "path/to/target/release/{project-name}",
-      "args": []
-    }
-  }
-}
-```
-
-## Tools
-
-- **{tool_name}**: {Tool description}
-
-## Development
-
-Run tests:
-
-```bash
-cargo test
-```
-
-Run with logging:
-
-```bash
-RUST_LOG=debug cargo run
-```
+tokio-test = "=0.4.5"   # async test utilities
 ```
 
 ### src/main.rs
 
 ```rust
 use anyhow::Result;
-use rmcp::{
-    protocol::ServerCapabilities,
-    server::Server,
-    transport::StdioTransport,
-};
-use tokio::signal;
-use tracing_subscriber;
+use rmcp::ServiceExt;
+use tracing_subscriber::{EnvFilter, fmt};
 
 mod handler;
-mod state;
-mod tools;
 mod prompts;
 mod resources;
+mod tools;
 
-use handler::McpHandler;
+use handler::MyMcpServer;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
+    // Logging MUST go to stderr — stdout carries the MCP JSON-RPC stream.
+    fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
         .init();
-    
-    tracing::info!("Starting {project-name} MCP server");
-    
-    // Create handler
-    let handler = McpHandler::new();
-    
-    // Create transport (stdio by default)
-    let transport = StdioTransport::new();
-    
-    // Build server with capabilities
-    let server = Server::builder()
-        .with_handler(handler)
-        .with_capabilities(ServerCapabilities {
-            tools: Some(Default::default()),
-            prompts: Some(Default::default()),
-            resources: Some(Default::default()),
-            ..Default::default()
-        })
-        .build(transport)?;
-    
-    tracing::info!("Server started, waiting for requests");
-    
-    // Run server until Ctrl+C
-    server.run(signal::ctrl_c()).await?;
-    
-    tracing::info!("Server shutting down");
+
+    let server = MyMcpServer::new();
+
+    // Stdio transport for local clients (Claude Desktop, Copilot, etc.)
+    let service = server
+        .serve(rmcp::transport::stdio())
+        .await
+        .inspect_err(|e| tracing::error!("failed to start server: {e}"))?;
+
+    // Serve until the client disconnects. Never drop a RunningService.
+    service.waiting().await?;
     Ok(())
 }
 ```
@@ -218,156 +117,116 @@ async fn main() -> Result<()> {
 ### src/handler.rs
 
 ```rust
+use std::borrow::Cow;
+
 use rmcp::{
+    ServerHandler, ServerConfig,
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
-    protocol::*,
-    server::{RequestContext, ServerHandler, RoleServer, ToolRouter},
-    ErrorData,
+    service::{RequestContext, RoleServer},
+    tool, tool_handler, tool_router,
+    ErrorData as McpError,
 };
-use rmcp::{tool_router, tool_handler};
-use async_trait::async_trait;
 
-use crate::state::ServerState;
-use crate::tools;
+use crate::prompts;
+use crate::resources;
+use crate::tools::{self, ExampleParams};
 
-pub struct McpHandler {
-    state: ServerState,
-    tool_router: ToolRouter,
+#[derive(Clone)]
+pub struct MyMcpServer {
+    tool_router: ToolRouter<Self>,
 }
 
-#[tool_router]
-impl McpHandler {
-    // Include tool definitions from tools module
-    #[tool(
-        name = "example_tool",
-        description = "An example tool",
-        annotations(read_only_hint = true)
-    )]
-    async fn example_tool(params: Parameters<tools::ExampleParams>) -> Result<String, String> {
-        tools::example::execute(params).await
-    }
-    
+impl MyMcpServer {
     pub fn new() -> Self {
         Self {
-            state: ServerState::new(),
             tool_router: Self::tool_router(),
         }
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tools
+// ---------------------------------------------------------------------------
+
+#[tool_router]
+impl MyMcpServer {
+    /// Example tool: echo a message back with a greeting.
+    #[tool(description = "Greet someone by name")]
+    async fn greet(
+        &self,
+        Parameters(params): Parameters<ExampleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let text = tools::greet(&params.name).await?;
+        Ok(CallToolResult::success(vec![Content::text(text)]))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ServerHandler
+// ---------------------------------------------------------------------------
+
 #[tool_handler]
-#[async_trait]
-impl ServerHandler for McpHandler {
+#[rmcp::prompt_handler]
+impl ServerHandler for MyMcpServer {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(Implementation {
+            name: "my-mcp-server".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            ..Default::default()
+        })
+        .with_instructions("A template MCP server with tools, prompts, and resources.".into())
+    }
+
+    /// Serve every MCP protocol version rmcp 3.4.0 knows about:
+    /// 2026-07-28, 2025-11-25 (LATEST), 2025-06-18, and 2024-11-05.
+    /// rmcp negotiates the highest mutually supported version per client.
+    ///
+    /// NOTE: this matches the SDK default; shown explicitly so you can
+    /// restrict versions (e.g. drop 2024-11-05) in one obvious place.
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        Cow::Borrowed(ProtocolVersion::KNOWN_VERSIONS)
+    }
+
+    // Prompts
     async fn list_prompts(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
-    ) -> Result<ListPromptsResult, ErrorData> {
-        let prompts = vec![
-            Prompt {
-                name: "example-prompt".to_string(),
-                description: Some("An example prompt".to_string()),
-                arguments: Some(vec![
-                    PromptArgument {
-                        name: "topic".to_string(),
-                        description: Some("The topic to discuss".to_string()),
-                        required: Some(true),
-                    },
-                ]),
-            },
-        ];
-        
-        Ok(ListPromptsResult { prompts })
+    ) -> Result<ListPromptsResult, McpError> {
+        prompts::list_prompts().await
     }
-    
+
     async fn get_prompt(
         &self,
-        request: GetPromptRequestParam,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<GetPromptResult, ErrorData> {
-        match request.name.as_str() {
-            "example-prompt" => {
-                let topic = request.arguments
-                    .as_ref()
-                    .and_then(|args| args.get("topic"))
-                    .ok_or_else(|| ErrorData::invalid_params("topic required"))?;
-                
-                Ok(GetPromptResult {
-                    description: Some("Example prompt".to_string()),
-                    messages: vec![
-                        PromptMessage::user(format!("Let's discuss: {}", topic)),
-                    ],
-                })
-            }
-            _ => Err(ErrorData::invalid_params("Unknown prompt")),
-        }
+        request: GetPromptRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        prompts::get_prompt(request, context).await
     }
-    
+
+    // Resources
     async fn list_resources(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
-    ) -> Result<ListResourcesResult, ErrorData> {
-        let resources = vec![
-            Resource {
-                uri: "example://data/info".to_string(),
-                name: "Example Resource".to_string(),
-                description: Some("An example resource".to_string()),
-                mime_type: Some("text/plain".to_string()),
-            },
-        ];
-        
-        Ok(ListResourcesResult { resources })
+    ) -> Result<ListResourcesResult, McpError> {
+        resources::list_resources().await
     }
-    
+
     async fn read_resource(
         &self,
-        request: ReadResourceRequestParam,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<ReadResourceResult, ErrorData> {
-        match request.uri.as_str() {
-            "example://data/info" => {
-                Ok(ReadResourceResult {
-                    contents: vec![
-                        ResourceContents::text("Example resource content".to_string())
-                            .with_uri(request.uri)
-                            .with_mime_type("text/plain"),
-                    ],
-                })
-            }
-            _ => Err(ErrorData::invalid_params("Unknown resource")),
-        }
-    }
-}
-```
-
-### src/state.rs
-
-```rust
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-#[derive(Clone)]
-pub struct ServerState {
-    // Add shared state here
-    counter: Arc<RwLock<i32>>,
-}
-
-impl ServerState {
-    pub fn new() -> Self {
-        Self {
-            counter: Arc::new(RwLock::new(0)),
-        }
-    }
-    
-    pub async fn increment(&self) -> i32 {
-        let mut counter = self.counter.write().await;
-        *counter += 1;
-        *counter
-    }
-    
-    pub async fn get(&self) -> i32 {
-        *self.counter.read().await
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        resources::read_resource(request, context).await
     }
 }
 ```
@@ -375,203 +234,303 @@ impl ServerState {
 ### src/tools/mod.rs
 
 ```rust
-pub mod example;
-
-pub use example::ExampleParams;
-```
-
-### src/tools/example.rs
-
-```rust
-use rmcp::model::Parameters;
-use serde::{Deserialize, Serialize};
+use rmcp::{ErrorData as McpError, model::ErrorCode};
+use serde::Deserialize;
 use schemars::JsonSchema;
 
+/// Parameters for the `greet` tool. Deriving JsonSchema lets rmcp
+/// advertise the input schema to clients automatically.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExampleParams {
-    pub input: String,
+    /// Name of the person to greet.
+    pub name: String,
 }
 
-pub async fn execute(params: Parameters<ExampleParams>) -> Result<String, String> {
-    let input = &params.inner().input;
-    
-    // Tool logic here
-    Ok(format!("Processed: {}", input))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[tokio::test]
-    async fn test_example_tool() {
-        let params = Parameters::new(ExampleParams {
-            input: "test".to_string(),
-        });
-        
-        let result = execute(params).await.unwrap();
-        assert!(result.contains("test"));
+pub async fn greet(name: &str) -> Result<String, McpError> {
+    if name.trim().is_empty() {
+        return Err(McpError::new(
+            ErrorCode::INVALID_PARAMS,
+            "name must not be empty".into(),
+            None,
+        ));
     }
+    Ok(format!("Hello, {name}!"))
 }
 ```
 
 ### src/prompts/mod.rs
 
+Prompts can be defined either with the `#[prompt]` macro family (preferred for
+static prompts) or as plain async functions behind `list_prompts`/`get_prompt`
+(shown in handler.rs). Macro form:
+
 ```rust
-// Prompt implementations can go here if needed
+use rmcp::{
+    ErrorData as McpError,
+    handler::server::wrapper::Parameters,
+    model::*,
+    prompt, prompt_handler, prompt_router,
+    service::{RequestContext, RoleServer},
+};
+use serde::Deserialize;
+use schemars::JsonSchema;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SummarizeArgs {
+    /// Text to summarize.
+    pub text: String,
+}
+
+// On the server struct:
+#[prompt_router]
+impl MyMcpServer {
+    /// Summarize a piece of text.
+    #[prompt(name = "summarize", description = "Summarize the given text")]
+    async fn summarize(
+        &self,
+        Parameters(args): Parameters<SummarizeArgs>,
+    ) -> Result<GetPromptResult, McpError> {
+        Ok(GetPromptResult {
+            description: Some("Summarize text".into()),
+            messages: vec![PromptMessage::new_text(
+                PromptMessageRole::User,
+                format!("Summarize this concisely:\n\n{}", args.text),
+            )],
+        })
+    }
+}
+```
+
+Function-based fallback (`list_prompts` / `get_prompt`) for dynamic catalogs:
+
+```rust
+use rmcp::{ErrorData as McpError, model::*, service::{RequestContext, RoleServer}};
+
+pub async fn list_prompts() -> Result<ListPromptsResult, McpError> {
+    Ok(ListPromptsResult {
+        prompts: vec![Prompt::new(
+            "summarize",
+            Some("Summarize the given text".into()),
+            Some(vec![PromptArgument {
+                name: "text".into(),
+                description: Some("Text to summarize".into()),
+                required: Some(true),
+                ..Default::default()
+            }]),
+        )],
+        next_cursor: None,
+        meta: None,
+    })
+}
+
+pub async fn get_prompt(
+    request: GetPromptRequestParams,
+    _context: RequestContext<RoleServer>,
+) -> Result<GetPromptResult, McpError> {
+    match request.name.as_str() {
+        "summarize" => {
+            let text = request
+                .arguments
+                .as_ref()
+                .and_then(|a| a.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            Ok(GetPromptResult {
+                description: Some("Summarize text".into()),
+                messages: vec![PromptMessage::new_text(
+                    PromptMessageRole::User,
+                    format!("Summarize this concisely:\n\n{text}"),
+                )],
+            })
+        }
+        _ => Err(McpError::invalid_params(
+            format!("unknown prompt: {}", request.name),
+            None,
+        )),
+    }
+}
 ```
 
 ### src/resources/mod.rs
 
 ```rust
-// Resource implementations can go here if needed
-```
+use rmcp::{ErrorData as McpError, model::*, service::{RequestContext, RoleServer}};
 
-### tests/integration_test.rs
-
-```rust
-use rmcp::{
-    model::*,
-    protocol::*,
-    server::{RequestContext, ServerHandler, RoleServer},
-};
-
-// Replace with your actual project name in snake_case
-// Example: if project is "my-mcp-server", use my_mcp_server
-use my_mcp_server::handler::McpHandler;
-
-#[tokio::test]
-async fn test_list_tools() {
-    let handler = McpHandler::new();
-    let context = RequestContext::default();
-    
-    let result = handler.list_tools(None, context).await.unwrap();
-    
-    assert!(!result.tools.is_empty());
-    assert!(result.tools.iter().any(|t| t.name == "example_tool"));
+pub async fn list_resources() -> Result<ListResourcesResult, McpError> {
+    Ok(ListResourcesResult {
+        resources: vec![
+            RawResource {
+                uri: "example://data/info".into(),
+                name: "Server info".into(),
+                description: Some("Static metadata about this server".into()),
+                mime_type: Some("text/plain".into()),
+                ..Default::default()
+            }
+            .no_annotation(),
+        ],
+        next_cursor: None,
+        meta: None,
+    })
 }
 
-#[tokio::test]
-async fn test_call_tool() {
-    let handler = McpHandler::new();
-    let context = RequestContext::default();
-    
-    let request = CallToolRequestParam {
-        name: "example_tool".to_string(),
-        arguments: Some(serde_json::json!({
-            "input": "test"
-        })),
-    };
-    
-    let result = handler.call_tool(request, context).await;
-    assert!(result.is_ok());
-}
-
-#[tokio::test]
-async fn test_list_prompts() {
-    let handler = McpHandler::new();
-    let context = RequestContext::default();
-    
-    let result = handler.list_prompts(None, context).await.unwrap();
-    assert!(!result.prompts.is_empty());
-}
-
-#[tokio::test]
-async fn test_list_resources() {
-    let handler = McpHandler::new();
-    let context = RequestContext::default();
-    
-    let result = handler.list_resources(None, context).await.unwrap();
-    assert!(!result.resources.is_empty());
-}
-```
-
-## Implementation Guidelines
-
-1. **Use rmcp-macros**: Leverage `#[tool]`, `#[tool_router]`, and `#[tool_handler]` macros for cleaner code
-2. **Type Safety**: Use `schemars::JsonSchema` for all parameter types
-3. **Error Handling**: Return `Result` types with proper error messages
-4. **Async/Await**: All handlers must be async
-5. **State Management**: Use `Arc<RwLock<T>>` for shared state
-6. **Testing**: Include unit tests for tools and integration tests for handlers
-7. **Logging**: Use `tracing` macros (`info!`, `debug!`, `warn!`, `error!`)
-8. **Documentation**: Add doc comments to all public items
-
-## Example Tool Patterns
-
-### Simple Read-Only Tool
-
-```rust
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GreetParams {
-    pub name: String,
-}
-
-#[tool(
-    name = "greet",
-    description = "Greets a user by name",
-    annotations(read_only_hint = true, idempotent_hint = true)
-)]
-async fn greet(params: Parameters<GreetParams>) -> String {
-    format!("Hello, {}!", params.inner().name)
-}
-```
-
-### Tool with Error Handling
-
-```rust
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct DivideParams {
-    pub a: f64,
-    pub b: f64,
-}
-
-#[tool(name = "divide", description = "Divides two numbers")]
-async fn divide(params: Parameters<DivideParams>) -> Result<f64, String> {
-    let p = params.inner();
-    if p.b == 0.0 {
-        Err("Cannot divide by zero".to_string())
-    } else {
-        Ok(p.a / p.b)
+pub async fn read_resource(
+    request: ReadResourceRequestParams,
+    _context: RequestContext<RoleServer>,
+) -> Result<ReadResourceResult, McpError> {
+    match request.uri.as_str() {
+        "example://data/info" => Ok(ReadResourceResult {
+            contents: vec![ResourceContents::text(
+                "my-mcp-server — built with rmcp 3.4.0",
+                request.uri.clone(),
+            )],
+        }),
+        _ => Err(McpError::resource_not_found(
+            format!("unknown resource: {}", request.uri),
+            None,
+        )),
     }
 }
 ```
 
-### Tool with State
+For binary content, encode with base64 0.23:
 
 ```rust
-#[tool(
-    name = "increment",
-    description = "Increments the counter",
-    annotations(destructive_hint = true)
-)]
-async fn increment(state: &ServerState) -> i32 {
-    state.increment().await
+use base64::{Engine, prelude::BASE64_STANDARD};
+
+let blob = BASE64_STANDARD.encode(&bytes);
+// then ResourceContents::blob(blob, uri) with an appropriate mime_type
+```
+
+### tests/server_tests.rs
+
+```rust
+use my_mcp_server::handler::MyMcpServer;
+use rmcp::{ServerHandler, handler::server::router::tool::ToolCallContext};
+
+// NOTE: RequestContext has no Default impl. Exercise handler behavior
+// through tool_router / get_info / supported_protocol_versions, or spin
+// up an in-memory service pair with rmcp::transport::Transport channels.
+
+#[tokio::test]
+async fn lists_tools() {
+    let server = MyMcpServer::new();
+    let tools = server.tool_router().list_all();
+    assert!(tools.iter().any(|t| t.name == "greet"));
+}
+
+#[tokio::test]
+async fn advertises_capabilities() {
+    let server = MyMcpServer::new();
+    let info = server.get_info();
+    assert!(info.capabilities.tools.is_some());
+    assert!(info.capabilities.prompts.is_some());
+    assert!(info.capabilities.resources.is_some());
+}
+
+#[tokio::test]
+async fn serves_all_protocol_versions() {
+    let server = MyMcpServer::new();
+    let versions = server.supported_protocol_versions();
+    assert!(versions.contains(&rmcp::model::ProtocolVersion::V_2026_07_28));
+    assert!(versions.contains(&rmcp::model::ProtocolVersion::V_2025_11_25));
+    assert!(versions.contains(&rmcp::model::ProtocolVersion::V_2025_06_18));
+    assert!(versions.contains(&rmcp::model::ProtocolVersion::V_2024_11_05));
 }
 ```
 
-## Running the Generated Server
+### Optional: Streamable HTTP transport
 
-After generation:
+For remote servers, use the tower-based Streamable HTTP transport. Verify
+exact type/feature names against rmcp 3.4.0's `transport-streamable-http-server`
+docs before shipping:
 
-```bash
-cd {project-name}
-cargo build
-cargo test
-cargo run
+```rust
+// UNVERIFIED — check rmcp 3.4.0 docs for the exact service constructor.
+use rmcp::transport::streamable_http_server::{
+    StreamableHttpServerConfig, StreamableHttpService,
+};
+
+let service = StreamableHttpService::new(
+    || Ok(MyMcpServer::new()),
+    Default::default(),
+    StreamableHttpServerConfig::default(),
+);
+// Mount `service` on an axum 0.8 router and serve with tokio.
 ```
 
-For Claude Desktop integration:
+### README.md template
+
+````markdown
+# my-mcp-server
+
+A Model Context Protocol server built with [rmcp](https://github.com/modelcontextprotocol/rust-sdk) 3.4.0.
+
+Supports MCP protocol versions **2026-07-28**, **2025-11-25**, **2025-06-18**, and **2024-11-05** with automatic version negotiation.
+
+## Features
+
+- Tools: `greet`
+- Prompts: `summarize`
+- Resources: `example://data/info`
+
+## Build & Run
+
+```bash
+cargo build
+cargo run          # stdio transport
+cargo test
+```
+
+## Client configuration (stdio)
 
 ```json
 {
   "mcpServers": {
-    "{project-name}": {
-      "command": "path/to/{project-name}/target/release/{project-name}",
-      "args": []
+    "my-mcp-server": {
+      "command": "/path/to/target/debug/my-mcp-server"
     }
   }
 }
 ```
 
-Now generate the complete project based on the user's requirements!
+## Logging
+
+Logs go to **stderr** only; stdout is reserved for the MCP JSON-RPC stream.
+Set `RUST_LOG=debug` for verbose output.
+````
+
+## Implementation Guidelines
+
+1. **Never write to stdout** in server code — it corrupts the JSON-RPC stream. Use `tracing` with a stderr writer.
+2. **Keep `rmcp` and `rmcp-macros` versions in lockstep.**
+3. **Await or cancel every `RunningService`** — dropping leaks the task.
+4. **Derive `JsonSchema` on all parameter structs** so clients get accurate input schemas.
+5. **Return `McpError` (`ErrorData`) with precise codes** (`INVALID_PARAMS`, `RESOURCE_NOT_FOUND`) instead of panicking.
+6. **Prefer `#[tool]`/`#[prompt]` macros**; use manual `list_*`/`read_*` handlers only for dynamic catalogs.
+7. **Serve all known protocol versions by default**; restrict `supported_protocol_versions()` only with a documented reason.
+8. **Do not invent OAuth/stateless-HTTP APIs** — if a transport detail isn't verified against rmcp 3.4.0 source or docs.rs, mark it unverified or omit it.
+
+## Tool Implementation Pattern
+
+```rust
+#[tool_router]
+impl MyMcpServer {
+    /// Divide two numbers safely.
+    #[tool(description = "Divide a by b")]
+    async fn divide(
+        &self,
+        Parameters(p): Parameters<DivideParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if p.b == 0.0 {
+            return Err(McpError::invalid_params("b must be non-zero".into(), None));
+        }
+        Ok(CallToolResult::success(vec![Content::text(
+            format!("{}", p.a / p.b),
+        )]))
+    }
+}
+```
+
+Combine `#[tool_router(server_handler)]` when the server exposes **only** tools;
+otherwise use separate `#[tool_handler]` + `#[prompt_handler]` attributes on the
+`ServerHandler` impl as shown in handler.rs.
